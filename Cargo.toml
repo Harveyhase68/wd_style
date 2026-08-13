@@ -1,0 +1,12 @@
+[package]
+name = "wd_style"
+version = "1.2.0"
+edition = "2021"
+
+[lib]
+name = "wd_style"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 2
+lto = true

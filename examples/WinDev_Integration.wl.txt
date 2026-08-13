@@ -1,0 +1,121 @@
+// ============================================================================
+// wd_style.dll v1.1 — Einbindung in WinDev
+// ============================================================================
+// Dateien: wd_style32.dll (32-Bit) / wd_style64.dll (64-Bit)
+// Statische CRT (keine vcruntime140.dll noetig), extern "C", unverzierte
+// Namen — Aufruf wie random_crypt_lib.dll ueber CallDLL32.
+//
+// WICHTIGE ERKENNTNIS v1.1: Die Positions-/Caption-Eintraege im Style-Blob
+// sind OVERRIDES. Sie existieren nur, wenn die Eigenschaft im Editor abwei-
+// chend vom Gabarit (Style-Sheet) gesetzt wurde. Nicht ueberschriebene
+// Eigenschaften werden VERERBT und stehen nicht im Blob -> dafuer gibt es
+// jetzt die Rueckgabewerte 13/14 plus WDStyleBaseHash() zur Aufloesung.
+//
+// Exportierte Funktionen:
+//   WDStyleCaptionPosition(ptr, len)          -> int  (siehe Tabelle)
+//   WDStyleBaseHash(ptr, len)                 -> int  (Gabarit-Hash, positiv)
+//   WDStyleUncompressedSize(ptr, len)         -> int  (Blockgroesse Header)
+//   WDStyleUncompress(ptr, len, out, outCap)  -> int  (kompletter Stream)
+//
+// Rueckgabewerte WDStyleCaptionPosition:
+//   0  Unknown             (Style erkannt, Wert nicht zuordenbar -> melden!)
+//   1  NoCaption           (Override "keine Caption")
+//   2  Top                 (Override)
+//   3  Bottom              (Override)
+//   4  Center              (Override)
+//   5  Left                (Override)
+//   6  Right               (Override)
+//   7  Center + Juxtaposed image     (Override)
+//   8  Center + Left image           (Override)
+//   9  Center + Right image          (Override)
+//   10 Left + Left image             (Override)
+//   11 Right + Right image           (Override)
+//   12 Free positioning              (Override)
+//   13 PositionInherited   (Caption laut Override sichtbar, Position ERBT
+//                           vom Gabarit -> mit WDStyleBaseHash aufloesen)
+//   14 Inherited           (weder Caption noch Position ueberschrieben ->
+//                           alles ERBT vom Gabarit -> WDStyleBaseHash)
+//   -1 ungueltige Parameter, -2 kein LZHUF-Header, -3 Dekompressionsfehler
+// ============================================================================
+
+PROCEDURE ButtonCaptionPositionDLL(sControlPath is string): int
+
+bufStyle is Buffer = {sControlPath, indControl}..Style
+IF Length(bufStyle) < 12 THEN RESULT -1
+
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+nPos is int = CallDLL32(sDLL, "WDStyleCaptionPosition", &bufStyle, Length(bufStyle))
+
+// Vererbte Werte ueber das Gabarit aufloesen:
+// Ein Eintrag pro Button-Gabarit im Projekt. Die Hashes stammen aus dem
+// Scan aller 669 Buttons von primaB2B (08.08.2026) — die Default-Position
+// je Gabarit bitte einmalig im Editor nachschauen und hier eintragen!
+IF nPos = 13 OR nPos = 14 THEN
+	nHash is int = CallDLL32(sDLL, "WDStyleBaseHash", &bufStyle, Length(bufStyle))
+	SWITCH nHash
+		CASE 1687076956: nPos = 4   // Standard-Gabarit (591 Buttons) -> pruefen!
+		CASE 1057522061: nPos = 4   // Projekt_Kalender-Buttons (35)  -> pruefen!
+		CASE 1974627324: nPos = 4   // Bestellungen/Artikelsortiment (18) -> pruefen!
+		CASE 1250233622: nPos = 4   // Loeschen-Buttons (6)           -> pruefen!
+		CASE 610814626:  nPos = 4   // Kalender Sondertyp (6)         -> pruefen!
+		CASE 1557293410: nPos = 4   // WebButtons Lizenz (4)          -> pruefen!
+		// ... weitere nach Bedarf; unbekannter Hash -> nPos bleibt 13/14
+	END
+	// Bei nPos=14 kann auch die Caption-Sichtbarkeit vererbt sein
+	// (Icon-Gabarits ohne Caption!) -> dann hier statt 4 eine 1 eintragen.
+END
+RESULT nPos
+
+// ---------------------------------------------------------------------------
+// Spaltentitel-/Border-Hintergrundbild (Schritt 2, v1.2 — Weg A: Lookup)
+// ---------------------------------------------------------------------------
+// WDStyleHasColTitleImage(ptr,len) -> 1 Bild gesetzt / 0 kein Bild / <0 Fehler
+// WDStyleColTitleImageId(ptr,len)  -> 0 kein Bild / <0 Fehler / >0 Fingerprint
+//
+// WICHTIG: Der Fingerprint unterscheidet verschiedene Bilder zuverlaessig,
+// ist aber farb-konfundiert (das Bildfeld ueberlappt im Stream die verwuerfelte
+// Titelfarbe). Nur stabil bei KONSTANTER Titelfarbe. Farb-unabhaengiger
+// Klartext-Name kommt mit Weg B (Scramble reversen).
+PROCEDURE ColTitleImageName(bufStyle is Buffer): string
+
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+IF CallDLL32(sDLL, "WDStyleHasColTitleImage", &bufStyle, Length(bufStyle)) <> 1 THEN
+	RESULT ""   // kein Spaltentitel-Bild gesetzt
+END
+nId is int = CallDLL32(sDLL, "WDStyleColTitleImageId", &bufStyle, Length(bufStyle))
+SWITCH nId
+	CASE 749989678:  RESULT "bild1.png"
+	CASE 1083170495: RESULT "bild2.png"
+	CASE 1058762980: RESULT "bild3.png"
+	CASE 595445315:  RESULT "Evolution2_Table_ColTitle.png"  // Farbe 000000/FFFFFF
+	OTHER CASE
+		// Unbekannter Fingerprint -> Style-Sample exportieren, Id hier eintragen.
+		RESULT "?" + nId
+END
+
+// ---------------------------------------------------------------------------
+// Kompletten Style-Stream entpacken (fuer weitere Property-Forschung)
+// ---------------------------------------------------------------------------
+PROCEDURE StyleUncompressFull(bufStyle is Buffer): Buffer
+
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+nCap is int = 65536
+bufRaw is Buffer = RepeatString(Charact(0), nCap)
+nLen is int = CallDLL32(sDLL, "WDStyleUncompress", &bufStyle, Length(bufStyle), &bufRaw, nCap)
+IF nLen <= 0 THEN RESULT ""
+IF nLen > nCap THEN
+	bufRaw = RepeatString(Charact(0), nLen)
+	nLen = CallDLL32(sDLL, "WDStyleUncompress", &bufStyle, Length(bufStyle), &bufRaw, nLen)
+END
+RESULT bufRaw[[1 TO nLen]]
+
+// ---------------------------------------------------------------------------
+// Verifikation v1.1 (Stand 08.08.2026):
+// - cargo test: 41 Labor-Samples + 3 Produktiv-Faelle, alle gruen
+// - Komplett-Scan ueber 669 echte Buttons aus primaB2B:
+//     152x NoCaption, 36x explizite Positionen (2-12),
+//     30x PositionInherited, 443x Inherited, 0x Unknown
+// - 13 verschiedene Gabarit-Hashes im Projekt gefunden
+// - Hash ist positionsunabhaengig (alle 6 Testpositionen -> gleicher Hash)
+//   und projektweit stabil (gleicher Hash in verschiedenen Fenstern)
+// ---------------------------------------------------------------------------

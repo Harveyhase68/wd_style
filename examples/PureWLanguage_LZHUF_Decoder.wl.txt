@@ -1,0 +1,255 @@
+// ============================================================================
+// Caption-Position eines Buttons zur Laufzeit ermitteln
+// ============================================================================
+// Reverse-engineered aus 24 ..Style-Samples (4 Buttons, 2 Fenster):
+//
+//   ..Style-Buffer = 0x04 | u32 kompr.Groesse | u32 unkompr.Groesse | 0x0000
+//                    | LZHUF-Bitstream (Okumura/Yoshizaki, Ringpuffer 0x00)
+//
+// Im dekomprimierten Struct (Buttons: 1498 Bytes) liegen zwei Signaturen:
+//   Token 34 B4 81 77 F4 C4  -> naechste 4 Bytes:
+//        24 00 00 00  = keine Caption ("No caption")
+//        9A A9 C4 22  = Caption sichtbar
+//   Token 6D EF 5F A4 DD 79 9F D0 18 77  -> naechste 4 Bytes:
+//        8F 97 5F D9  = Top
+//        8F C8 E6 00  = Bottom
+//        8F C8 49 00  = Centered
+//        8F CD C8 00  = Right
+//        50 00 00 00  = Left
+//        (Token fehlt komplett bei "No caption")
+//
+// HINWEIS: Die 6 Kombi-Optionen (Center+Left image usw.) wurden noch nicht
+// gesampelt -> bei unbekanntem Wert liefert die Prozedur "?" + Hexwert,
+// dann einfach die Tabelle erweitern.
+// ============================================================================
+
+PROCEDURE ButtonCaptionPosition(sControlPath is string): string
+
+bufStyle is Buffer = {sControlPath, indControl}..Style
+IF Length(bufStyle) < 12 THEN RESULT "?"
+
+// -- Schritt 1: dekomprimieren ----------------------------------------------
+// Erst die eingebaute Uncompress() probieren (PC SOFT nutzt intern evtl.
+// dasselbe Format). Falls sie scheitert: eigener LZHUF-Decoder (unten).
+bufRaw is Buffer = Uncompress(bufStyle)
+IF bufRaw = "" THEN bufRaw = LZHUFDecode(bufStyle)
+IF bufRaw = "" THEN RESULT "?"
+
+// -- Schritt 2: Caption an/aus ----------------------------------------------
+bufTokCap is Buffer = HexaToBuffer("34B48177F4C4")
+nP is int = Position(bufRaw, bufTokCap)
+IF nP = 0 THEN RESULT "?"                                   // kein Button-Style?
+IF bufRaw[[nP+6 TO nP+9]] = HexaToBuffer("24000000") THEN RESULT "none"
+
+// -- Schritt 3: Position ----------------------------------------------------
+bufTokPos is Buffer = HexaToBuffer("6DEF5FA4DD799FD01877")
+nP = Position(bufRaw, bufTokPos)
+IF nP = 0 THEN RESULT "?"
+bufVal is Buffer = bufRaw[[nP+10 TO nP+13]]
+
+IF bufVal = HexaToBuffer("8F975FD9") THEN RESULT "top"
+IF bufVal = HexaToBuffer("8FC8E600") THEN RESULT "bottom"
+IF bufVal = HexaToBuffer("8FC84900") THEN RESULT "centered"
+IF bufVal = HexaToBuffer("8FCDC800") THEN RESULT "right"
+IF bufVal = HexaToBuffer("50000000") THEN RESULT "left"
+
+// Unbekannter Wert (z.B. Center+Left image): Hexwert zurueckgeben,
+// damit die Tabelle erweitert werden kann
+RESULT "? " + BufferToHexa(bufVal)
+
+
+// ============================================================================
+// LZHUF-Decoder in purem WLanguage (Fallback, falls Uncompress() versagt)
+// Port von lzhuf.c (Haruyasu Yoshizaki 1989) - PC-SOFT-Variante:
+// Ringpuffer mit 0x00 initialisiert. Alle C-Indizes um +1 verschoben.
+// ============================================================================
+PROCEDURE LZHUFDecode(bufStyle is Buffer): Buffer
+
+// Konstanten
+N       is int = 4096      // Ringpuffer
+F       is int = 60        // max. Matchlaenge
+NCHAR   is int = 314       // 256 Literale + 58 Matchlaengen
+T       is int = 627       // NCHAR*2-1 Baumknoten
+R       is int = 626       // Wurzel (C-Index)
+MAXFREQ is int = 32768
+
+// Header pruefen
+IF bufStyle[[1]] <> 4 THEN RESULT ""
+nOrig is int = bufStyle[[6]] + bufStyle[[7]]*256 + bufStyle[[8]]*65536 + bufStyle[[9]]*16777216
+IF nOrig <= 0 OR nOrig > 10000000 THEN RESULT ""
+
+// Bit-Reader-Zustand (MSB-first, Daten ab Byte 12)
+nBytePos is int = 11        // zuletzt gelesenes Byte (1-basiert), Start: Header = 11 Bytes
+nCur     is int = 0         // aktueller Bytewert (schiebt nach links)
+nBitsLeft is int = 0
+
+INTERNAL PROCEDURE GetBit(): int
+	IF nBitsLeft = 0 THEN
+		nBytePos++
+		IF nBytePos > Length(bufStyle) THEN
+			nCur = 0
+		ELSE
+			nCur = bufStyle[[nBytePos]]
+		END
+		nBitsLeft = 8
+	END
+	nBit is int = 0
+	IF BinaryAND(nCur, 128) <> 0 THEN nBit = 1
+	nCur = modulo(nCur*2, 256)
+	nBitsLeft--
+	RESULT nBit
+END
+
+// ---- Positions-Dekodiertabellen (kanonische Codes) ----
+// Codelaengen der oberen 6 Positionsbits: 1x3, 3x4, 8x5, 12x6, 24x7, 16x8
+arrPLen is array of 64 int
+nV is int
+FOR nV = 1 TO 64
+	arrPLen[nV] = 8
+	IF nV <= 48 THEN arrPLen[nV] = 7
+	IF nV <= 24 THEN arrPLen[nV] = 6
+	IF nV <= 12 THEN arrPLen[nV] = 5
+	IF nV <= 4  THEN arrPLen[nV] = 4
+	IF nV = 1   THEN arrPLen[nV] = 3
+END
+arrDCode is array of 256 int      // 8-Bit-Praefix -> Positions-Oberwert (0..63)
+arrDLen  is array of 256 int      // 8-Bit-Praefix -> Codelaenge
+nCode is int = 0
+nFrom is int
+nSpan is int
+nI is int
+FOR nV = 1 TO 64
+	nSpan = 1
+	FOR nI = 1 TO 8 - arrPLen[nV]     // nSpan = 2^(8-len)
+		nSpan = nSpan * 2
+	END
+	nFrom = nCode * nSpan
+	FOR nI = nFrom TO nFrom + nSpan - 1
+		arrDCode[nI+1] = nV - 1
+		arrDLen[nI+1]  = arrPLen[nV]
+	END
+	nCode++
+	IF nV < 64 AND arrPLen[nV+1] > arrPLen[nV] THEN
+		FOR nI = 1 TO arrPLen[nV+1] - arrPLen[nV]
+			nCode = nCode * 2
+		END
+	END
+END
+
+// ---- Adaptiver Huffman-Baum initialisieren (StartHuff) ----
+arrFreq is array of 628 int       // C-Index 0..627 -> WL 1..628
+arrPrnt is array of 941 int       // C-Index 0..940 -> WL 1..941
+arrSon  is array of 627 int       // C-Index 0..626 -> WL 1..627
+FOR nI = 0 TO NCHAR-1
+	arrFreq[nI+1] = 1
+	arrSon[nI+1] = nI + T
+	arrPrnt[nI+T+1] = nI
+END
+nJ is int = NCHAR
+nI = 0
+WHILE nJ <= R
+	arrFreq[nJ+1] = arrFreq[nI+1] + arrFreq[nI+2]
+	arrSon[nJ+1] = nI
+	arrPrnt[nI+1] = nJ
+	arrPrnt[nI+2] = nJ
+	nI += 2
+	nJ++
+END
+arrFreq[T+1] = 65535
+arrPrnt[R+1] = 0
+
+INTERNAL PROCEDURE HuffUpdate(nSym is int)
+	// nSym = dekodiertes Symbol (0..313)
+	nC is int
+	nK is int
+	nL is int
+	nX is int
+	nY is int
+	nC = arrPrnt[nSym + T + 1]
+	LOOP
+		arrFreq[nC+1]++
+		nK = arrFreq[nC+1]
+		nL = nC + 1
+		IF nK > arrFreq[nL+1] THEN
+			WHILE nK > arrFreq[nL+2]
+				nL++
+			END
+			arrFreq[nC+1] = arrFreq[nL+1]
+			arrFreq[nL+1] = nK
+			nX = arrSon[nC+1]
+			arrPrnt[nX+1] = nL
+			IF nX < T THEN arrPrnt[nX+2] = nL
+			nY = arrSon[nL+1]
+			arrSon[nL+1] = nX
+			arrPrnt[nY+1] = nC
+			IF nY < T THEN arrPrnt[nY+2] = nC
+			arrSon[nC+1] = nY
+			nC = nL
+		END
+		nC = arrPrnt[nC+1]
+		IF nC = 0 THEN BREAK
+	END
+END
+
+INTERNAL PROCEDURE DecodeChar(): int
+	nC is int = arrSon[R+1]
+	WHILE nC < T
+		nC += GetBit()
+		nC = arrSon[nC+1]
+	END
+	nC -= T
+	HuffUpdate(nC)
+	RESULT nC
+END
+
+INTERNAL PROCEDURE DecodePosition(): int
+	nX is int = 0
+	nK is int
+	FOR nK = 1 TO 8
+		nX = nX*2 + GetBit()
+	END
+	nUpper is int = arrDCode[nX+1] * 64
+	FOR nK = 1 TO arrDLen[nX+1] - 2
+		nX = nX*2 + GetBit()
+	END
+	RESULT nUpper + modulo(nX, 64)
+END
+
+// ---- Hauptschleife ----
+bufOut is Buffer = HexaToBuffer(RepeatString("00", nOrig))
+arrText is array of 4096 int      // Ringpuffer, mit 0 initialisiert (PC-SOFT!)
+nR is int = N - F                 // 4036 (C-Index)
+nCount is int = 0
+nSym is int
+nPos is int
+nIdx is int
+nLen is int
+nCh is int
+nK is int
+
+WHILE nCount < nOrig
+	// Sicherung gegen Endlosschleife/Ueberlauf (reconst nicht portiert,
+	// wird bei Styles < 32 KB nie erreicht)
+	IF arrFreq[R+1] >= MAXFREQ THEN RESULT ""
+	nSym = DecodeChar()
+	IF nSym < 256 THEN
+		nCount++
+		bufOut[[nCount]] = nSym
+		arrText[nR+1] = nSym
+		nR = modulo(nR+1, N)
+	ELSE
+		nPos = DecodePosition()
+		nIdx = modulo(nR - nPos - 1 + N, N)
+		nLen = nSym - 255 + 2
+		FOR nK = 0 TO nLen-1
+			nCh = arrText[modulo(nIdx+nK, N)+1]
+			nCount++
+			bufOut[[nCount]] = nCh
+			arrText[nR+1] = nCh
+			nR = modulo(nR+1, N)
+			IF nCount >= nOrig THEN BREAK
+		END
+	END
+END
+
+RESULT bufOut

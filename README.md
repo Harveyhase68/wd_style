@@ -186,4 +186,4 @@ PC SOFT; it only reads data structures of your own applications at runtime.
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

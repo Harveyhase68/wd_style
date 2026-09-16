@@ -40,10 +40,16 @@
 // Eleven Icon links, Ankaa Icon RECHTS; Cobalt sogar breitenabhaengig!).
 // Fuer 1:1-Nachbau ist das Gerenderte die richtige Wahrheit.
 //
-// Bekannte Grenze: Icon in einer Farbe, die zugleich dominante Hintergrund-
-// farbe ist (weisses Icon auf hellem Fill + weisse Fensterecken, z.B.
-// Cobalt-NC-Buttons) wird noch uebersehen -> has_image=0, Caption-Erkennung
-// bleibt korrekt. Fix (Farbregion-Konnektivitaet) ist geplant.
+// NAVIGATIONS-BUTTONS ("<", "<<", ">", ">>" als Caption, KEIN Bild): v1.4.1
+// behandelt bei imageHint=0 ALLES Gerenderte als Caption -> auch Ein-Zeichen-
+// Captions werden erkannt. Wichtig: wirklich WDLayoutAnalyzeBMP2 aufrufen
+// (mit der 2!) und den Caption-STRING uebergeben — die alte WDLayoutAnalyzeBMP
+// erwartet dort eine ZAHL; ein String an der Stelle wird als Adresse
+// fehlinterpretiert!
+//
+// Bekannte Rest-Grenze: weisses Icon, das visuell in eine randberuehrende
+// weisse Glanzzone uebergeht (extrem kontrastarm), bleibt unerkannt; normale
+// weisse Icons auf hellem Fill findet seit v1.4.1 die Insel-Segmentierung.
 // ============================================================================
 
 sLayout is Structure

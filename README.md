@@ -107,10 +107,14 @@ All functions are `extern "C"`, undecorated names, callable via `CallDLL32()` or
 | `WDLayoutAnalyzeBMP(ptr, len, captionHint, imageHint) -> int` | v2 (kept for compatibility): 0/1 hints are *trusted* — an icon-only button with non-empty caption property is misreported. Prefer v3 |
 | `WDLayoutAnalyzeRaw(ptr, w, h, stride, fmt, captionHint, imageHint) -> int` | v2 raw-pixel variant |
 
-Known v3 limitation: an icon drawn in a color that is *also* a dominant background
-color (e.g. a white icon on a pale fill next to white window corners) is currently
-missed (`has_image=0`); caption detection is unaffected. A per-color-region
-connectivity fix is planned. Note also that the DLL reports what is **rendered** —
+Two v3 details worth knowing. First, if the control's image property is empty
+(`imageHint=0`), **everything rendered is treated as the caption** — this is what makes
+one/two-glyph captions work (record-navigation buttons captioned `<`, `>>`, …). Second,
+an icon drawn in a color that is *also* a dominant background color (white icon, pale
+fill, white window corners) is handled by an island-segmentation fallback (regions of a
+dominant color that do not touch the image border are ink); only glyphs that visually
+*merge into* a border-touching glare band remain undetectable — a genuine contrast
+limit. Note also that the DLL reports what is **rendered** —
 the same designer setting can render differently per theme (observed: "left caption +
 left image" renders icon-left in Eleven but icon-right in Ankaa).
 

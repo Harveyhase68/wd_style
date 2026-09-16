@@ -108,6 +108,33 @@ fn ink_mask(w: usize, h: usize, rgb: &[[u8; 3]]) -> (Vec<bool>, [f64; 3]) {
     (mask, doms[0].0)
 }
 
+/// Fallback, wenn die Dominanzfarben-Maske nichts findet: Tinte = Regionen,
+/// die einer dominanten Farbe angehoeren, aber den BILDRAND NICHT beruehren
+/// (Inseln). Loest "weisses Icon auf hellem Fill neben weissen Fensterecken".
+/// Kein lokaler Flood-Fill -> sickert nicht durch Anti-Aliasing.
+fn ink_mask_islands(w: usize, h: usize, rgb: &[[u8; 3]]) -> Vec<bool> {
+    let doms = dominant_colors(rgb);
+    let mut bg = vec![false; w * h];
+    for (m, _) in &doms {
+        let mask_d: Vec<bool> = rgb
+            .iter()
+            .map(|p| {
+                (p[0] as f64 - m[0]).abs() + (p[1] as f64 - m[1]).abs()
+                    + (p[2] as f64 - m[2]).abs()
+                    <= 60.0
+            })
+            .collect();
+        for c in components(&mask_d, w, h) {
+            if c.x0 == 0 || c.y0 == 0 || c.x1 == w as i64 - 1 || c.y1 == h as i64 - 1 {
+                for &(y, x) in &c.px {
+                    bg[y as usize * w + x as usize] = true;
+                }
+            }
+        }
+    }
+    bg.iter().map(|&b| !b).collect()
+}
+
 /// 8er-Zusammenhangskomponenten (Scanreihenfolge = Python-Prototyp).
 fn components(mask: &[bool], w: usize, h: usize) -> Vec<C> {
     let mut lab = vec![false; w * h];
@@ -274,14 +301,30 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
         }
     }
 
-    let mut comps: Vec<C> = components(&mask2, w, h).into_iter().filter(|c| c.n >= 4).collect();
-    // Rahmenreste (fast ganze Flaeche) und Glow-Linien filtern
-    comps.retain(|c| !((c.x1 - c.x0) as f64 > 0.92 * wf && (c.y1 - c.y0) as f64 > 0.92 * hf));
-    comps.retain(|c| {
-        let lw = c.w();
-        let lh = c.h();
-        !((lh <= 3 && lw as f64 >= 0.5 * wf) || (lw <= 3 && lh as f64 >= 0.5 * hf))
-    });
+    let build_comps = |m: &[bool]| -> Vec<C> {
+        let mut cs: Vec<C> = components(m, w, h).into_iter().filter(|c| c.n >= 4).collect();
+        // Rahmenreste (fast ganze Flaeche) und Glow-Linien filtern
+        cs.retain(|c| !((c.x1 - c.x0) as f64 > 0.92 * wf && (c.y1 - c.y0) as f64 > 0.92 * hf));
+        cs.retain(|c| {
+            let lw = c.w();
+            let lh = c.h();
+            !((lh <= 3 && lw as f64 >= 0.5 * wf) || (lw <= 3 && lh as f64 >= 0.5 * hf))
+        });
+        cs
+    };
+    let mut comps = build_comps(&mask2);
+    if comps.is_empty() {
+        // Fallback: Insel-Segmentierung (Icon-Farbe == dominante Hintergrundfarbe)
+        let mut mask3 = ink_mask_islands(w, h, rgb);
+        for y in 0..h {
+            for x in 0..w {
+                if y < 2 || y >= h.saturating_sub(2) || x < 2 || x >= w.saturating_sub(2) {
+                    mask3[y * w + x] = false;
+                }
+            }
+        }
+        comps = build_comps(&mask3);
+    }
     if comps.is_empty() {
         return res;
     }
@@ -323,7 +366,12 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
 
     let mut text_chain: Option<Vec<usize>> = None;
     let mut stripped: Vec<usize> = Vec::new();
-    if caption_hint {
+    if caption_hint && !image_hint {
+        // Kein Bild zugewiesen -> ALLES Gerenderte ist die Caption. Wichtig
+        // fuer Ein-/Zwei-Zeichen-Captions ("<", ">>", Navigations-Buttons),
+        // die keine Buchstabenkette bilden koennen.
+        text_chain = Some((0..comps.len()).collect());
+    } else if caption_hint {
         let exp0 = caption.map(expected_glyphs);
         // Weg B: verschmolzener Text = breiter flacher LOECHRIGER Blob
         let mut blob: Option<usize> = None;
@@ -745,6 +793,27 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 207, "erwartet 207 Testfaelle, geprueft: {}", checked);
+    }
+
+    /// Navigations-Buttons: Caption ist "<", ">>" usw. (1-2 Glyphen), KEIN
+    /// Bild zugewiesen -> alles Gerenderte muss als Caption erkannt werden.
+    /// (Die NC_IC-Samples liefern genau so einen Einzel-Glyph-Render.)
+    #[test]
+    fn nav_buttons_einzelglyph_caption() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples_layout");
+        for f in [
+            "Eleven_BTN_PLUS_NC_IC_1.bmp",
+            "Eleven_BTN_ARROW_DOWN_NC_IC_3.bmp",
+            "Ankaa_BTN_QUESTION_NC_IC_1.bmp",
+            "Cobalt_BTN_PLUS_NC_IC_2.bmp",
+        ] {
+            let d = fs::read(dir.join(f)).unwrap();
+            // imageHint=0 + Caption "<" -> Caption erkannt, kein Icon
+            let p = WDLayoutAnalyzeBMP2(d.as_ptr(), d.len() as i32, b"<\0".as_ptr(), 0);
+            assert!(p >= 0, "{}: Fehler {}", f, p);
+            assert_eq!((p >> 4) & 1, 1, "{}: Caption muss erkannt werden", f);
+            assert_eq!((p >> 9) & 1, 0, "{}: kein Icon erwartet", f);
+        }
     }
 
     #[test]

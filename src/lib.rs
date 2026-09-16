@@ -17,6 +17,12 @@
 //!   WDStyleUncompressedSize(ptr, len)           -> i32 (deklarierte Blockgroesse)
 //!   WDStyleUncompress(ptr, len, out, out_cap)   -> i32 (voller Stream; siehe Doku)
 
+mod layout;
+mod layout3;
+pub use layout::*;
+mod steps;
+pub use steps::*;
+
 const RING: usize = 4096;
 const F: usize = 60;
 const THRESHOLD: usize = 2;

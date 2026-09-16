@@ -1,0 +1,62 @@
+// ============================================================================
+// wd_style.dll v1.3 — Button-Zustandsbild: überzählige Steps entfernen
+// ============================================================================
+// Button-Hintergrundbilder haben S States (nebeneinander) x P Steps (übereinander
+// gestapelt). Die Step-Zahl ist per WLanguage NICHT auslesbar, die State-Zahl schon
+// (..NombreEtat / ..NumberOfStates, 1..5). Diese Funktionen erkennen die Steps aus
+// dem Bild und schneiden ein Mehr-Step-Bild auf 1 Step (oberstes Band) zurück.
+//
+// Erkennung (grössen-robust, da 1-Step und 6-Step gleich gross sein können):
+//   cell = Breite / (States * Höhe)
+//     cell >= 0.7  -> 1 Step  (Bild bleibt unverändert)
+//     cell <  0.7  -> 6 Steps (auf oberstes 1/6 der Höhe kürzen)
+//
+// Exporte:
+//   WDImageStepCount(ptrBMP, len, numStates)                 -> int (1 oder 6, <0 Fehler)
+//   WDImageReduceSteps(ptrBMP, len, numStates, out, outCap)  -> int (Länge Ergebnis-BMP)
+//
+// Eingabe ist ein BMP-Buffer (24/32-Bit). In WinDev: Bild laden -> dSaveImageBMP.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Bilddatei auf 1 Step reduzieren und als neue Datei speichern.
+// Liefert TRUE, wenn gekürzt wurde, FALSE wenn schon 1 Step (unverändert).
+// ---------------------------------------------------------------------------
+PROCEDURE ReduceButtonImageSteps(sQuelle is string, sZiel is string, nStates is int): boolean
+
+// 1) Quelle als BMP in einen Buffer
+imgSrc  is Image  = sQuelle
+bufBMP  is Buffer = dSaveImageBMP(imgSrc)     // 24-Bit BMP im Speicher
+
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+
+// 2) nötige Ausgabegrösse abfragen (out = Null)
+nLen is int = API(sDLL, "WDImageReduceSteps", &bufBMP, Length(bufBMP), nStates, Null, 0)
+IF nLen <= 0 THEN RESULT False
+
+// 3) Ergebnis-BMP abholen
+bufOut is Buffer = RepeatString(Charact(0), nLen)
+API(sDLL, "WDImageReduceSteps", &bufBMP, Length(bufBMP), nStates, &bufOut, nLen)
+
+// 4) als Zielbild speichern (BMP-Bytes -> Image -> Datei)
+imgOut is Image
+Deserialize(imgOut, bufOut, psdBinary)        // oder: in .bmp schreiben und laden
+dSaveImagePNG(imgOut, sZiel)                  // Format nach Wunsch
+
+// war es mehr als 1 Step?
+RESULT (Length(bufOut) < Length(bufBMP))
+
+// ---------------------------------------------------------------------------
+// Nur die Step-Anzahl wissen (z.B. um selbst zu entscheiden/zuschneiden):
+// ---------------------------------------------------------------------------
+PROCEDURE ButtonImageStepCount(sQuelle is string, nStates is int): int
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+bufBMP is Buffer = dSaveImageBMP(Image(sQuelle))
+RESULT API(sDLL, "WDImageStepCount", &bufBMP, Length(bufBMP), nStates)  // 1 oder 6
+
+// ---------------------------------------------------------------------------
+// Hinweis: dSaveImageBMP/Deserialize-Details je nach WinDev-Version leicht
+// unterschiedlich. Alternativ: Quelle als temp .bmp speichern, mit fLoadBuffer
+// laden; Ergebnis-Buffer als temp .bmp schreiben und mit dChargeImage laden.
+// Wichtig ist nur: rein/raus sind BMP-Bytes.
+// ============================================================================

@@ -1,6 +1,13 @@
 // ============================================================================
-// wd_style.dll v1.1 — Einbindung in WinDev
+// wd_style.dll v1.2 — Einbindung in WinDev
 // ============================================================================
+// EMPFEHLUNG (2026-08-15): Fuer Caption-/Icon-POSITION jetzt den Screenshot-Weg
+// nutzen -> wd_layout_Einbindung_WLanguage.txt (WDLayoutAnalyzeBMP). Er
+// funktioniert fuer JEDE Steuerung/Gabarit/Theme. Das untenstehende
+// WDStyleCaptionPosition (blob-basiert) bleibt gueltig, deckt aber nur bekannte
+// Button-Gabarits ab (sonst 14 = geerbt). WDStyleUncompress / WDStyleBaseHash /
+// WDStyleColTitleImage* sind davon unberuehrt und weiterhin nuetzlich.
+// ----------------------------------------------------------------------------
 // Dateien: wd_style32.dll (32-Bit) / wd_style64.dll (64-Bit)
 // Statische CRT (keine vcruntime140.dll noetig), extern "C", unverzierte
 // Namen — Aufruf wie random_crypt_lib.dll ueber CallDLL32.

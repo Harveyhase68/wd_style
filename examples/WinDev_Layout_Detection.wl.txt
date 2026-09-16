@@ -1,0 +1,137 @@
+// ============================================================================
+// wd_style.dll v1.4 — Layout-Erkennung aus dem Button-Screenshot (v3!)
+// ============================================================================
+// Liest Caption-/Icon-Position aus dem GERENDERTEN Button-Ausschnitt, statt das
+// verwuerfelte ..Style-Format zu dekodieren. Funktioniert fuer JEDE Steuerung,
+// jedes Gabarit und jede WinDev-Version.
+//
+// NEU in v3 (validiert an 207 gelabelten Buttons, Themes Eleven/Cobalt/Ankaa;
+// Rust-Port testet alle 207 Faelle automatisch, cargo test gruen):
+//  * Die Caption-ANZEIGE wird ERKANNT, nicht mehr dem Hint geglaubt!
+//    Du uebergibst den Caption-TEXT (String); ist die Anzeige im Style
+//    abgeschaltet (Icon-only-Button), kommt korrekt "keine Caption" zurueck.
+//    -> behebt: "Button hat nur Image, meldet trotzdem Caption Center".
+//    Ergebnis Testset: Caption-Praesenz 206/207 (99,5 %).
+//  * Caption-String -> Glyphenzahl -> am Text klebende (juxtaposed) Icons
+//    werden als ueberzaehliges Kettenglied erkannt und abgespalten.
+//  * Fette kleine Schrift (Ankaa) und Rahmen-Glow werden korrekt behandelt.
+//  * Zusatz-Exporte: Hintergrundfarbe, hell/dunkel, Schriftfarbe.
+//
+// Exportierte Funktionen (neu, empfohlen):
+//   WDLayoutAnalyzeBMP2(ptrBMP, len, sCaption, imageHint)                -> i32
+//   WDLayoutAnalyzeRaw2(ptrPix, w, h, stride, fmt, sCaption, imageHint)  -> i32
+//   WDLayoutBgColor(ptrBMP, len)                    -> 0xRRGGBB Fuellfarbe
+//   WDLayoutIsDark(ptrBMP, len)                     -> 1 dunkel / 0 hell
+//   WDLayoutFgColor(ptrBMP, len, sCaption, imgHint) -> 0xRRGGBB Schriftfarbe
+//                                                      (-3 = keine Caption)
+//   sCaption: nullterminierter ANSI-String = Caption-PROPERTY des Buttons
+//             (leer/NULL = Property leer). Anzeige wird selbst erkannt!
+//   imageHint: 1 = Bild-Property belegt, 0 = kein Bild.
+//   (Alt, weiter vorhanden: WDLayoutAnalyzeBMP/Raw mit captionHint 0/1.)
+//
+// Rueckgabe (>=0): Bitfeld wie bisher
+//   Bits 0-1: caption_h   Bits 2-3: caption_v   Bit 4: caption sichtbar
+//   Bits 5-6: image_h     Bits 7-8: image_v     Bit 9: hat Icon
+//   Positions-Code je 2 Bit: 0=none, 1=left/top, 2=center, 3=right/bottom
+//   Negativ: -1 Argumente, -2 kein gueltiges BMP (24/32 Bit, unkomprimiert)
+//
+// WICHTIG - Render vs. Einstellung: Die DLL meldet, wie der Button GERENDERT
+// ist. Dieselbe Design-Einstellung kann je Theme anders rendern ("CL IL":
+// Eleven Icon links, Ankaa Icon RECHTS; Cobalt sogar breitenabhaengig!).
+// Fuer 1:1-Nachbau ist das Gerenderte die richtige Wahrheit.
+//
+// Bekannte Grenze: Icon in einer Farbe, die zugleich dominante Hintergrund-
+// farbe ist (weisses Icon auf hellem Fill + weisse Fensterecken, z.B.
+// Cobalt-NC-Buttons) wird noch uebersehen -> has_image=0, Caption-Erkennung
+// bleibt korrekt. Fix (Farbregion-Konnektivitaet) ist geplant.
+// ============================================================================
+
+sLayout is Structure
+	display_caption is int
+	vertical_display_pos is string
+	horizontal_display_pos is string
+	has_image is int
+	vertical_image_pos is string
+	horizontal_image_pos is string
+END
+
+PROCEDURE DetectButtonLayout(sControlName is string, sCaption is string, bHasImage is boolean): sLayout
+res is sLayout
+
+// 1) Button als Bild holen (nur den Steuerungs-Bereich, kein Vollbild)
+imgBtn is Image = ScreenCaptureControl(sControlName)   // oder eigenes Capture
+bufBMP is Buffer = dSaveImageBMP(imgBtn)               // 24-Bit BMP im Speicher
+
+// 2) DLL aufrufen: Caption-TEXT direkt uebergeben (NICHT nur 0/1!).
+//    In Unicode-Projekten vorher nach ANSI wandeln:
+sCapAnsi is ANSI string = sCaption
+sDLL is string = In64bitMode() ? "wd_style64.dll" ELSE "wd_style32.dll"
+nImg is int = bHasImage ? 1 ELSE 0
+nP is int = CallDLL32(sDLL, "WDLayoutAnalyzeBMP2", &bufBMP, Length(bufBMP), &sCapAnsi, nImg)
+
+IF nP < 0 THEN
+	res.display_caption = 0
+	res.vertical_display_pos = "none"
+	res.horizontal_display_pos = "none"
+	res.has_image = 0
+	res.vertical_image_pos = "center"
+	res.horizontal_image_pos = "center"
+	RESULT res
+END
+
+nCapH is int = BinaryAND(nP, 3)
+nCapV is int = BinaryAND(BinaryShiftRight(nP, 2), 3)
+nDisp is int = BinaryAND(BinaryShiftRight(nP, 4), 1)
+nImgH is int = BinaryAND(BinaryShiftRight(nP, 5), 3)
+nImgV is int = BinaryAND(BinaryShiftRight(nP, 7), 3)
+nHasI is int = BinaryAND(BinaryShiftRight(nP, 9), 1)
+
+res.display_caption = nDisp
+res.horizontal_display_pos = nDisp = 1 ? PosH(nCapH) ELSE "none"
+res.vertical_display_pos   = nDisp = 1 ? PosV(nCapV) ELSE "none"
+res.has_image = nHasI
+res.horizontal_image_pos = nHasI = 1 ? PosH(nImgH) ELSE "center"
+res.vertical_image_pos   = nHasI = 1 ? PosV(nImgV) ELSE "center"
+RESULT res
+
+PROCEDURE PosH(n is int): string
+SWITCH n
+	CASE 1: RESULT "left"
+	CASE 2: RESULT "center"
+	CASE 3: RESULT "right"
+	OTHER CASE: RESULT "none"
+END
+
+PROCEDURE PosV(n is int): string
+SWITCH n
+	CASE 1: RESULT "top"
+	CASE 2: RESULT "center"
+	CASE 3: RESULT "bottom"
+	OTHER CASE: RESULT "none"
+END
+
+// ---------------------------------------------------------------------------
+// Mapping auf die 6 Export-Werte (deine Prioritaeten: I Caption ja/nein,
+// II Icon links/rechts; Fallback immer "center caption center image")
+// ---------------------------------------------------------------------------
+// 1 = no caption (center image)      4 = left caption right image
+// 2 = top caption center image      5 = right caption left image
+// 3 = bottom caption center image   6 = center caption center image (Default)
+PROCEDURE LayoutToExportValue(lay is sLayout): int
+IF lay.display_caption = 0 THEN RESULT 1
+IF lay.vertical_display_pos = "top"    THEN RESULT 2
+IF lay.vertical_display_pos = "bottom" THEN RESULT 3
+IF lay.horizontal_image_pos = "right" AND lay.has_image = 1 THEN RESULT 4
+IF lay.horizontal_image_pos = "left"  AND lay.has_image = 1 THEN RESULT 5
+RESULT 6
+
+// ---------------------------------------------------------------------------
+// Farben (fuer den 1:1-Nachbau)
+// ---------------------------------------------------------------------------
+// nBg is int = CallDLL32(sDLL, "WDLayoutBgColor", &bufBMP, Length(bufBMP))   // 0xRRGGBB
+// nDark is int = CallDLL32(sDLL, "WDLayoutIsDark", &bufBMP, Length(bufBMP))  // 1/0
+// nFg is int = CallDLL32(sDLL, "WDLayoutFgColor", &bufBMP, Length(bufBMP), &sCapAnsi, nImg)
+// IF nFg = -3 THEN ... keine Caption erkannt -> keine Schriftfarbe
+// Achtung: 0xRRGGBB; WinDev-RGB() erwartet RGB(r,g,b) — zerlegen mit:
+//   nR = BinaryAND(BinaryShiftRight(nFg,16),255)  usw.
+// ============================================================================

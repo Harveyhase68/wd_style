@@ -1,5 +1,5 @@
 // ============================================================================
-// wd_style.dll v1.4.2 — Layout-Erkennung aus dem Button-Screenshot (v3!)
+// wd_style.dll v1.4.3 — Layout-Erkennung aus dem Button-Screenshot (v3!)
 // ============================================================================
 // Liest Caption-/Icon-Position aus dem GERENDERTEN Button-Ausschnitt, statt das
 // verwuerfelte ..Style-Format zu dekodieren. Funktioniert fuer JEDE Steuerung,
@@ -63,12 +63,28 @@
 // Textrest faelschlich als Icon gilt). Wenn du also z.B. "New" mit einem
 // Quadrat-Icon rechts hattest, das ploetzlich verschwand: v1.4.2 installieren!
 //
-// Bekannte Rest-Grenze: ein Icon, das OHNE sichtbaren Abstand direkt am Text
-// klebt (echtes "juxtaposed"), UND dessen Bild-Property leer ist, kann noch
-// uebersehen werden. Weisses Icon, das visuell in eine randberuehrende weisse
-// Glanzzone uebergeht (extrem kontrastarm), bleibt ebenfalls unerkannt;
-// normale weisse Icons auf hellem Fill findet seit v1.4.1 die Insel-
-// Segmentierung.
+// v1.4.3 (Fix eines echten Produktiv-Falls): ein GRAUES Icon neben SCHWARZEM
+// Text (z.B. "New [Quadrat]", "Close X", "Delete -", "Modify [Balken]") wurde
+// verschluckt, weil die adaptive Kontrastschwelle sich am DUNKELSTEN Element
+// im Bild orientiert (meist der Text) — ein Icon mit schwaecherem Kontrast
+// blieb darunter. Seit v1.4.3 laeuft bei fehlendem Icon zusaetzlich ein
+// Rettungs-Pass mit fester, niedrigerer Schwelle, aber NUR ausserhalb der
+// bereits erkannten Caption-Box (kein Effekt auf andere Faelle). Auch
+// laengliche Balken-/Strich-Icons (Minuszeichen) werden dabei akzeptiert.
+//
+// Bekannte Rest-Grenzen:
+// - Ein Icon, das OHNE sichtbaren Abstand direkt am Text klebt (echtes
+//   "juxtaposed") UND dessen Bild-Property leer ist, kann noch uebersehen
+//   werden.
+// - Weisses Icon, das visuell in eine randberuehrende weisse Glanzzone
+//   uebergeht (extrem kontrastarm), bleibt unerkannt; normale weisse Icons
+//   auf hellem Fill findet seit v1.4.1 die Insel-Segmentierung.
+// - Extrem kontrastarm GERENDERTER TEXT (nicht das Icon!): wenn schon die
+//   Caption-Buchstaben selbst in isolierte 1-2-Pixel-Krümel zerfallen (sehr
+//   kleine/verschwommene Schriftrenderung, beobachtet bei einem "Apply"-
+//   Button mit Dropdown-Pfeil), wird auch die Caption verpasst. Das ist ein
+//   eigener, noch offener Grenzfall — bei Auftreten bitte den BMP-Crop
+//   exportieren (dSaveImageBMP) und melden.
 // ============================================================================
 
 sLayout is Structure

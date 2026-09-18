@@ -173,11 +173,24 @@ Negative returns are errors: `-1` bad arguments, `-2` bad/unrecognized header (o
 Verified (v3) against **207 labeled test buttons** across three very different themes
 (Eleven light / Cobalt pastel pills / Ankaa dark bordered) — the whole corpus ships in
 [`samples_layout/`](samples_layout/) and runs as a `cargo test` that compares the Rust
-port field-by-field against the reference prototype: caption presence 206/207, icon
-side ≈ 93 % — plus the earlier mixed set of 48 real production buttons. The horizontal
-axis (left/center/right — WinDev's main distinction) is reliable throughout; the
-vertical position of full-height icons and tiny glued (juxtaposed) icons can still be
-a touch imprecise.
+port field-by-field against the reference prototype
+([`docs/layout_v3_prototyp.py`](docs/layout_v3_prototyp.py), German comments; both are
+kept in sync by hand): caption presence 206/207, icon side ≈ 93 % — plus a handful of
+real production buttons (`RealButton_*.bmp` in the same folder) and the earlier mixed
+set of 48. The horizontal axis (left/center/right — WinDev's main distinction) is
+reliable throughout; the vertical position of full-height icons and tiny glued
+(juxtaposed) icons can still be a touch imprecise.
+
+A production case worth naming: a **gray icon next to black text** ("New [square]",
+"Close X", "Delete -", a hamburger-style "Modify" icon) was originally missed, because
+the adaptive contrast threshold scales with the darkest element in the crop — usually
+the text — leaving less-contrasty icons below it. v1.4.3 adds a rescue pass that
+searches once more with a fixed, lower threshold, but strictly outside the already-
+detected caption box, so none of the 207 reference cases are affected. A harder,
+still-open edge case: a caption whose *text itself* renders at very low contrast
+(observed on one "Apply" button with a dropdown arrow, where the glyphs fragment into
+isolated 1–2 pixel specks) is not yet handled — that's a text-detection problem, not an
+icon-separation one.
 
 ### Return codes of `WDStyleCaptionPosition` (approach B)
 

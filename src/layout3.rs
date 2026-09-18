@@ -601,6 +601,75 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
             }
         }
     }
+    // ---- Rettungs-Pass: Icon mit schwaecherem Kontrast als der Text --------
+    // Der adaptive Schwellwert oben skaliert mit dist.max() (dominiert vom
+    // dunkelsten Element im Bild, meist der Text). Ein GRAUES Icon neben
+    // SCHWARZEM Text (z.B. "New [] "-Buttons) faellt dann unter den Tisch,
+    // weil seine Distanz zur Hintergrundfarbe kleiner ist als die dynamisch
+    // angehobene Schwelle. Fix: bei fehlendem Icon zusaetzlich mit einer
+    // FESTEN, niedrigeren Schwelle suchen — aber NUR ausserhalb der Caption-
+    // Box (inkl. Rand), damit die bestehende Text-/Icon-Trennung fuer alle
+    // anderen Faelle unangetastet bleibt (0 Regressionen im 207er-Testset,
+    // 0 Geister-Icons an reinen Text-Buttons ohne jedes Bild verifiziert).
+    // Grosszuegigere Kompaktheit (<=4.5 statt <=2.2): schmale Balken-Icons
+    // (Minus, Trennstriche) sind hier erlaubt; echte Linien filtert
+    // build_comps bereits vorher weg (h<=3 & w>=0.5*W bzw. transponiert).
+    if icon.is_none() {
+        if let Some((tx0r, ty0r, tx1r, ty1r)) = text_box {
+            let doms_r = dominant_colors(rgb);
+            let mut dist_r = vec![f64::MAX; w * h];
+            for (i, p) in rgb.iter().enumerate() {
+                let mut best = f64::MAX;
+                for (m, _) in &doms_r {
+                    let d = (p[0] as f64 - m[0]).abs()
+                        + (p[1] as f64 - m[1]).abs()
+                        + (p[2] as f64 - m[2]).abs();
+                    if d < best {
+                        best = d;
+                    }
+                }
+                dist_r[i] = best;
+            }
+            let mut mask_r: Vec<bool> = dist_r.iter().map(|&d| d > 90.0).collect();
+            for y in 0..h {
+                for x in 0..w {
+                    if y < 2 || y >= h.saturating_sub(2) || x < 2 || x >= w.saturating_sub(2) {
+                        mask_r[y * w + x] = false;
+                    }
+                }
+            }
+            let margin = 2i64;
+            let ry0 = (ty0r - margin).max(0) as usize;
+            let ry1 = ((ty1r + margin + 1).min(h as i64)) as usize;
+            let rx0 = (tx0r - margin).max(0) as usize;
+            let rx1 = ((tx1r + margin + 1).min(w as i64)) as usize;
+            for y in ry0..ry1 {
+                for x in rx0..rx1 {
+                    mask_r[y * w + x] = false;
+                }
+            }
+            let rclusters = cluster_boxes(build_comps(&mask_r), 4);
+            let rscore = |c: &C| {
+                let aspect = c.w().max(c.h()) as f64 / c.w().min(c.h()).max(1) as f64;
+                (c.n as f64).sqrt() * c.dens() / aspect
+            };
+            let rcompact =
+                |c: &C| c.w().max(c.h()) as f64 / c.w().min(c.h()).max(1) as f64 <= 4.5;
+            let nmin_r = ((0.15 * hf) as usize).max(8);
+            let mut rbest: Option<usize> = None;
+            for (i, c) in rclusters.iter().enumerate() {
+                if c.n >= nmin_r && rscore(c) >= 0.6 && rcompact(c) {
+                    if rbest.map(|b| rscore(c) > rscore(&rclusters[b])).unwrap_or(true) {
+                        rbest = Some(i);
+                    }
+                }
+            }
+            if let Some(bi) = rbest {
+                icon = Some(rclusters[bi].clone());
+            }
+        }
+    }
+
     if let Some(ic) = &icon {
         res.img_present = true;
         let icx = (ic.x0 + ic.x1) as f64 / 2.0;
@@ -884,6 +953,34 @@ mod tests {
                 f
             );
             assert_eq!(ohne_bild.img_h, mit_bild.img_h, "{}: Icon-Seite muss gleich bleiben", f);
+        }
+    }
+
+    /// Regressionswaechter fuer den v1.4.2-Bug (echte User-Buttons): ein
+    /// GRAUES Icon neben SCHWARZEM Text ("New [] ", "Close X", "Delete -")
+    /// wurde vom adaptiven Schwellwert verschluckt, weil dieser sich am
+    /// dunkelsten Element im Bild (dem Text) orientiert. Der Rettungs-Pass
+    /// (fester, niedrigerer Schwellwert ausserhalb der Caption-Box) muss das
+    /// Icon finden. "Apply" bleibt bewusst aussen vor — dort ist der TEXT
+    /// selbst so kontrastarm gerendert, dass er in Einzel-Pixel zerfaellt;
+    /// das ist ein eigenstaendiger, noch offener Grenzfall.
+    #[test]
+    fn schwaches_icon_neben_starkem_text() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples_layout");
+        for (f, cap) in [
+            ("RealButton_New1.bmp", "New"),
+            ("RealButton_New2.bmp", "New"),
+            ("RealButton_Close.bmp", "Close"),
+            ("RealButton_Delete.bmp", "Delete"),
+            ("RealButton_Modify.bmp", "Modify"),
+        ] {
+            let d = fs::read(dir.join(f)).unwrap();
+            let (w, h, rgb) = parse_bmp(&d).unwrap();
+            let r = analyze3(w, h, &rgb, Some(cap.as_bytes()), true);
+            assert!(r.cap_present, "{}: Caption muss erkannt werden", f);
+            assert_eq!(r.cap_h, P_CENTER, "{}: Caption muss center sein", f);
+            assert!(r.img_present, "{}: Icon muss trotz schwachem Kontrast gefunden werden", f);
+            assert_eq!(r.img_h, P_RIGHT, "{}: Icon muss rechts erkannt werden", f);
         }
     }
 

@@ -14,12 +14,25 @@
 //!    breite flache "Wort-Blobs" erkannt.
 //!  - Zusatz-Exporte: Hintergrundfarbe (Fuellung), Schriftfarbe, hell/dunkel.
 //!
+//! v1.4.1: imageHint=0 + keine Textkette gefunden -> ALLES Gerenderte ist die
+//!   Caption (Navigations-Buttons mit 1-2-Glyphen-Captions wie "<", ">>").
+//! v1.4.2 (Fix einer v1.4.1-Regression!): imageHint=0 heisst nur noch
+//!   "Bild-PROPERTY ist leer" — nicht "es kann kein Icon geben"! Viele
+//!   Buttons (z.B. "New"/"Print"/"Delete") holen ihr Icon aus dem Gabarit-
+//!   STYLE, ohne dass die Bild-Property gesetzt ist. v1.4.1 hat das faelsch-
+//!   lich in die Caption gezogen, sobald eine Textkette gefunden wurde.
+//!   Jetzt: Textkette hat Vorrang; danach laeuft die Icon-Suche AUCH bei
+//!   imageHint=0, aber mit zwei Waechtern (mind. eine Bedingung muss gelten,
+//!   sonst wird der Kandidat verworfen): (a) deutlich von der Caption
+//!   getrennt (Abstand >= 1.5x Textkettenhoehe) oder (b) mehr Komponenten
+//!   vorhanden als die Caption Glyphen hat. Verifiziert an Eleven_BTN_NoName3/
+//!   13/15 (Icon bleibt trotz imageHint=0 erkannt); Rest-Grenze: Icons, die
+//!   OHNE Luecke direkt am Text kleben (echtes Juxtaposed, z.B. NoName19).
+//!
 //! Bekannte Grenze (naechster Ausbauschritt): Icon in einer Farbe, die
 //! gleichzeitig dominante Hintergrundfarbe ist (weisses Icon auf hellem Fill
-//! mit weissen Fensterecken, Cobalt-NC-Buttons) -> Loesung waere
-//! Konnektivitaet pro Farbregion (Inseln = Tinte). Ein naiver Flood-Fill vom
-//! Rand ist KEINE Loesung (sickert durch Anti-Aliasing, im Prototyp getestet
-//! und verworfen).
+//! mit weissen Fensterecken, Cobalt-NC-Buttons) -> geloest seit v1.4.1 durch
+//! Insel-Segmentierung (Fallback, siehe ink_mask_islands).
 
 use crate::layout::{pack_result, parse_bmp, P_CENTER, P_LEFT, P_NONE, P_RIGHT};
 
@@ -366,12 +379,7 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
 
     let mut text_chain: Option<Vec<usize>> = None;
     let mut stripped: Vec<usize> = Vec::new();
-    if caption_hint && !image_hint {
-        // Kein Bild zugewiesen -> ALLES Gerenderte ist die Caption. Wichtig
-        // fuer Ein-/Zwei-Zeichen-Captions ("<", ">>", Navigations-Buttons),
-        // die keine Buchstabenkette bilden koennen.
-        text_chain = Some((0..comps.len()).collect());
-    } else if caption_hint {
+    if caption_hint {
         let exp0 = caption.map(expected_glyphs);
         // Weg B: verschmolzener Text = breiter flacher LOECHRIGER Blob
         let mut blob: Option<usize> = None;
@@ -418,6 +426,15 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
                 text_chain = Some(vec![bi]);
             }
         }
+    }
+
+    // Nav-Buttons: Caption-Property gesetzt, Bild-Property LEER und keine
+    // Textkette gefunden (1-2-Glyphen-Captions wie "<", ">>"): dann ist alles
+    // Gerenderte die Caption. Wird eine Textkette gefunden, koennen Reste
+    // trotzdem ein STYLE-Icon sein (Gabarit-Icons haben keine Bild-Property!)
+    // -> Icon-Suche laeuft dann unten mit Zusatz-Waechtern.
+    if caption_hint && !image_hint && text_chain.is_none() && !comps.is_empty() {
+        text_chain = Some((0..comps.len()).collect());
     }
 
     // ---- Juxtaposed-Icon von der Kette abspalten ---------------------------
@@ -495,8 +512,10 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
     }
 
     // ---- Icon: kompakter Cluster ausserhalb der Textkette ------------------
+    // Laeuft auch bei image_hint=0, wenn eine Textkette existiert: Gabarit-
+    // Styles koennen Icons rendern, OHNE dass die Bild-Property belegt ist!
     let mut icon: Option<C> = None;
-    if image_hint {
+    if image_hint || text_chain.is_some() {
         let in_chain: Vec<bool> = {
             let mut v = vec![false; comps.len()];
             if let Some(tc) = &text_chain {
@@ -527,6 +546,32 @@ pub fn analyze3(w: usize, h: usize, rgb: &[[u8; 3]], caption: Option<&[u8]>, ima
                 if best.map(|b| score(c) > score(&clusters[b])).unwrap_or(true) {
                     best = Some(i);
                 }
+            }
+        }
+        if let Some(bi) = best {
+            let mut accept = image_hint;
+            if !accept {
+                // Style-Icon ohne Bild-Property: nur akzeptieren, wenn es
+                // (a) deutlich von der Caption getrennt ist ODER (b) mehr
+                // Komponenten existieren, als die Caption Glyphen hat.
+                if let Some((tx0, ty0, tx1, ty1)) = text_box {
+                    let c = &clusters[bi];
+                    let th = (ty1 - ty0 + 1) as f64;
+                    let hgap = if c.x0 > tx1 {
+                        c.x0 - tx1
+                    } else if tx0 > c.x1 {
+                        tx0 - c.x1
+                    } else {
+                        0
+                    };
+                    let separated = hgap as f64 >= 1.5 * th;
+                    let exp = caption.map(expected_glyphs).unwrap_or(0);
+                    let extra = comps.len() > exp;
+                    accept = separated || extra;
+                }
+            }
+            if !accept {
+                best = None;
             }
         }
         if let Some(bi) = best {
@@ -813,6 +858,32 @@ mod tests {
             assert!(p >= 0, "{}: Fehler {}", f, p);
             assert_eq!((p >> 4) & 1, 1, "{}: Caption muss erkannt werden", f);
             assert_eq!((p >> 9) & 1, 0, "{}: kein Icon erwartet", f);
+        }
+    }
+
+    /// Regressionswaechter fuer den v1.4.1-Bug: Buttons mit Caption UND einem
+    /// Icon, das aus dem Gabarit-STYLE kommt (Bild-Property leer, wie bei
+    /// "New"/"Print"/"Delete" in der Praxis) muessen das Icon auch bei
+    /// imageHint=0 finden, solange es sichtbaren Abstand zur Caption hat.
+    #[test]
+    fn style_icon_ohne_bild_property() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples_layout");
+        for f in [
+            "Eleven_BTN_NoName3.bmp",
+            "Eleven_BTN_NoName13.bmp",
+            "Eleven_BTN_NoName15.bmp",
+        ] {
+            let d = fs::read(dir.join(f)).unwrap();
+            let (w, h, rgb) = parse_bmp(&d).unwrap();
+            let mit_bild = analyze3(w, h, &rgb, Some(b"XX XX"), true);
+            let ohne_bild = analyze3(w, h, &rgb, Some(b"XX XX"), false);
+            assert!(mit_bild.img_present, "{}: Referenzfall muss Icon haben", f);
+            assert_eq!(
+                ohne_bild.img_present, mit_bild.img_present,
+                "{}: Icon darf bei imageHint=0 nicht verschwinden",
+                f
+            );
+            assert_eq!(ohne_bild.img_h, mit_bild.img_h, "{}: Icon-Seite muss gleich bleiben", f);
         }
     }
 

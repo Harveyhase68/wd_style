@@ -107,16 +107,24 @@ All functions are `extern "C"`, undecorated names, callable via `CallDLL32()` or
 | `WDLayoutAnalyzeBMP(ptr, len, captionHint, imageHint) -> int` | v2 (kept for compatibility): 0/1 hints are *trusted* — an icon-only button with non-empty caption property is misreported. Prefer v3 |
 | `WDLayoutAnalyzeRaw(ptr, w, h, stride, fmt, captionHint, imageHint) -> int` | v2 raw-pixel variant |
 
-Two v3 details worth knowing. First, if the control's image property is empty
-(`imageHint=0`), **everything rendered is treated as the caption** — this is what makes
-one/two-glyph captions work (record-navigation buttons captioned `<`, `>>`, …). Second,
+Three v3 details worth knowing. First, `imageHint` is a hint about the *image
+property*, not a hard ceiling on whether an icon can be found — many buttons ("New",
+"Print", "Delete", nav arrows) draw their icon from the **style sheet** with the image
+property left empty. The detector always looks for an icon once a caption chain is
+found; `imageHint=0` only means it applies two extra guards before accepting one (the
+icon must sit with visible separation from the caption, or there must be more
+components than the caption has glyphs) — otherwise a stray text fragment could be
+misread as an icon. Second, if no caption chain is found at all *and* the image
+property is empty, everything rendered is treated as the caption — this is what makes
+one/two-glyph captions work (record-navigation buttons captioned `<`, `>>`, …). Third,
 an icon drawn in a color that is *also* a dominant background color (white icon, pale
 fill, white window corners) is handled by an island-segmentation fallback (regions of a
-dominant color that do not touch the image border are ink); only glyphs that visually
-*merge into* a border-touching glare band remain undetectable — a genuine contrast
-limit. Note also that the DLL reports what is **rendered** —
-the same designer setting can render differently per theme (observed: "left caption +
-left image" renders icon-left in Eleven but icon-right in Ankaa).
+dominant color that do not touch the image border are ink); only an icon glued directly
+to the text with *no* visible gap while the image property is empty, or glyphs that
+visually merge into a border-touching glare band, remain a real edge case. Note also
+that the DLL reports what is **rendered** — the same designer setting can render
+differently per theme (observed: "left caption + left image" renders icon-left in
+Eleven but icon-right in Ankaa).
 
 ### Blob decode & fingerprints (approach B + helpers)
 

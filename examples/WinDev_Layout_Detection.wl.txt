@@ -1,5 +1,5 @@
 // ============================================================================
-// wd_style.dll v1.4 — Layout-Erkennung aus dem Button-Screenshot (v3!)
+// wd_style.dll v1.4.2 — Layout-Erkennung aus dem Button-Screenshot (v3!)
 // ============================================================================
 // Liest Caption-/Icon-Position aus dem GERENDERTEN Button-Ausschnitt, statt das
 // verwuerfelte ..Style-Format zu dekodieren. Funktioniert fuer JEDE Steuerung,
@@ -40,16 +40,35 @@
 // Eleven Icon links, Ankaa Icon RECHTS; Cobalt sogar breitenabhaengig!).
 // Fuer 1:1-Nachbau ist das Gerenderte die richtige Wahrheit.
 //
-// NAVIGATIONS-BUTTONS ("<", "<<", ">", ">>" als Caption, KEIN Bild): v1.4.1
-// behandelt bei imageHint=0 ALLES Gerenderte als Caption -> auch Ein-Zeichen-
-// Captions werden erkannt. Wichtig: wirklich WDLayoutAnalyzeBMP2 aufrufen
-// (mit der 2!) und den Caption-STRING uebergeben — die alte WDLayoutAnalyzeBMP
-// erwartet dort eine ZAHL; ein String an der Stelle wird als Adresse
-// fehlinterpretiert!
+// WICHTIG - imageHint ist nur eine HERKUNFTS-Info, kein Ausschlusskriterium!
+// Viele Buttons ("New", "Print", "Delete", Navigations-Pfeile) holen ihr
+// Icon aus dem GABARIT-STYLE, ohne dass die Bild-PROPERTY belegt ist ->
+// imageHint=0, obwohl ein Icon sichtbar ist. Die DLL sucht deshalb IMMER
+// nach einem Icon, wenn eine Caption erkannt wurde; imageHint dient nur als
+// zusaetzliches Indiz. Uebergib trotzdem korrekt (Control..Image <> ""),
+// die DLL kompensiert die Faelle, in denen das Icon woanders herkommt.
 //
-// Bekannte Rest-Grenze: weisses Icon, das visuell in eine randberuehrende
-// weisse Glanzzone uebergeht (extrem kontrastarm), bleibt unerkannt; normale
-// weisse Icons auf hellem Fill findet seit v1.4.1 die Insel-Segmentierung.
+// NAVIGATIONS-BUTTONS ("<", "<<", ">", ">>" als Caption, KEIN Bild UND KEIN
+// Style-Icon danaben): wird keine Textkette gefunden (Ein-Zeichen-Captions
+// bilden keine Kette), gilt bei imageHint=0 ALLES Gerenderte als Caption.
+// Wichtig: wirklich WDLayoutAnalyzeBMP2 aufrufen (mit der 2!) und den
+// Caption-STRING uebergeben — die alte WDLayoutAnalyzeBMP erwartet dort eine
+// ZAHL; ein String an der Stelle wird als Adresse fehlinterpretiert!
+//
+// v1.4.2 (Fix einer v1.4.1-Regression): v1.4.1 hat bei imageHint=0 IMMER
+// alles der Caption zugeschlagen, auch wenn ein Style-Icon UND eine Caption
+// gleichzeitig sichtbar waren ("New [Symbol]") -> das Icon verschwand aus
+// der Erkennung. Seit v1.4.2 hat eine gefundene Textkette Vorrang, und die
+// Icon-Suche laeuft danach zusaetzlich (mit zwei Waechtern, damit kein
+// Textrest faelschlich als Icon gilt). Wenn du also z.B. "New" mit einem
+// Quadrat-Icon rechts hattest, das ploetzlich verschwand: v1.4.2 installieren!
+//
+// Bekannte Rest-Grenze: ein Icon, das OHNE sichtbaren Abstand direkt am Text
+// klebt (echtes "juxtaposed"), UND dessen Bild-Property leer ist, kann noch
+// uebersehen werden. Weisses Icon, das visuell in eine randberuehrende weisse
+// Glanzzone uebergeht (extrem kontrastarm), bleibt ebenfalls unerkannt;
+// normale weisse Icons auf hellem Fill findet seit v1.4.1 die Insel-
+// Segmentierung.
 // ============================================================================
 
 sLayout is Structure

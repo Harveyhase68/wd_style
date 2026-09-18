@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "wd_style"
-version = "1.4.1"
+version = "1.4.2"
